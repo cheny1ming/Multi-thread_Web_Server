@@ -23,19 +23,23 @@ SOCKET_TIMEOUT = 1  # Socket timeout in seconds for KeyboardInterrupt detection
 if not os.path.exists(WEB_ROOT):
     os.makedirs(WEB_ROOT)
 
+# Thread-safe lock for log file writing
+log_lock = threading.Lock()
+
 # ----------------------------- Core Functions -----------------------------
 def write_log(client_ip, access_time, req_file, status_code):
     """
-    Write request log to log file
+    Write request log to log file (thread-safe)
     Args:
         client_ip: Client IP address
         access_time: Time when request is received
         req_file: Requested file path
         status_code: HTTP response status code
     """
-    with open(LOG_FILE, 'a', encoding='utf-8') as log_fp:
-        log_line = f"{client_ip} | {access_time} | {req_file} | {status_code}\n"
-        log_fp.write(log_line)
+    with log_lock:
+        with open(LOG_FILE, 'a', encoding='utf-8') as log_fp:
+            log_line = f"{client_ip} | {access_time} | {req_file} | {status_code}\n"
+            log_fp.write(log_line)
 
 def get_file_last_modified(file_path):
     """
