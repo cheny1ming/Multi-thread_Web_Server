@@ -1,6 +1,6 @@
 # Multi-thread Web Server - COMP2322
 
-A high-performance, multi-threaded HTTP/1.1 web server implemented in Python with support for concurrent connections, caching, and comprehensive request logging.
+This is a repository of a multi-threaded HTTP/1.1 web server implemented in Python with support for concurrent connections, caching, and comprehensive request logging.
 
 ## Functions
 - Multi-threaded concurrent processing (supports up to 20 simultaneous connections)
