@@ -40,7 +40,7 @@ python server.py
 
 The server will start on `http://127.0.0.1:8080` by default.
 
-The URL `http://127.0.0.1:8080` can be visited on browser.
+The URL `http://127.0.0.1:8080` can be visited on browser to send requests to the server.
 
 Press `Ctrl+C` to stop the server.
 
@@ -73,7 +73,7 @@ curl -v http://127.0.0.1:8080/
 curl -I http://127.0.0.1:8080/index.html
 ```
 
-The `curl` command is non-persistent connection by default. We test persistent test by:
+The `curl` command is non-persistent connection (close) by default. We test persistent connection by:
 ```bash
 # Persistent connection test
 curl -v --header "Connection: keep-alive" http://127.0.0.1:8080/index.html
