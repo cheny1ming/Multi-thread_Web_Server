@@ -26,11 +26,11 @@ Multi-thread Web Server/
 
 ## How to Compile & Run?
 
-This project uses pure Python - no external library required!
+This project uses pure Python and only internal libraries will be used in this project. 
 
 ### Prerequisites
 - Python 3.6 or higher
-- Standard libraries: `socket`, `threading`, `os`, `datetime`, `mimetypes`
+- No external library required!
 
 ### Running the Server
 
