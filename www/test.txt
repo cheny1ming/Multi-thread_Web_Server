@@ -5,8 +5,4 @@ COMP 2322 - Computer Networks
 
 This file demonstrates the GET command for text files.
 
-Line 1: Text files are served with Content-Type: text/plain
-Line 2: The server uses mimetypes to determine file types
-Line 3: Both GET and HEAD commands are supported
-
 End of test file.
