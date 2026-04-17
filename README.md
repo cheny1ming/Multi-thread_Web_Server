@@ -73,7 +73,6 @@ curl -v --header "Connection: keep-alive" http://127.0.0.1:8080/index.html
 
 **Using browser:**
 - Navigate to `http://127.0.0.1:8080/`
-- The server will serve `index.html` with embedded test image
 
 ### Test Text and Image
 
