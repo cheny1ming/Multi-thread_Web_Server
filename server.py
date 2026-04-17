@@ -3,10 +3,13 @@ import socket
 import threading
 import os
 import datetime
+from datetime import timedelta, timezone
 import mimetypes
-from concurrent.futures import ThreadPoolExecutor
+
+# Note: Using threading.Thread directly instead of ThreadPoolExecutor for better Ctrl+C handling on Windows
 
 # -------------------------- Server Configuration --------------------------
+BEIJING_TZ = timezone(timedelta(hours=8))
 HOST = '127.0.0.1'
 PORT = 8080
 BUFFER_SIZE = 4096
@@ -15,6 +18,7 @@ LOG_FILE = 'server_log.txt'
 SUPPORTED_METHODS = ['GET', 'HEAD']
 HTTP_VER = 'HTTP/1.1'
 MAX_THREADS = 20
+SOCKET_TIMEOUT = 1  # Socket timeout in seconds for KeyboardInterrupt detection
 
 if not os.path.exists(WEB_ROOT):
     os.makedirs(WEB_ROOT)
@@ -39,11 +43,11 @@ def get_file_last_modified(file_path):
     Args:
         file_path: Local file path
     Returns:
-        Formatted time string (GMT)
+        Formatted time string (Beijing Time)
     """
     mod_timestamp = os.path.getmtime(file_path)
-    mod_time = datetime.datetime.fromtimestamp(mod_timestamp, datetime.UTC)
-    return mod_time.strftime('%a, %d %b %Y %H:%M:%S GMT')
+    mod_time = datetime.datetime.fromtimestamp(mod_timestamp, BEIJING_TZ)
+    return mod_time.strftime('%a, %d %b %Y %H:%M:%S CST')  # CST = China Standard Time
 
 def parse_http_request(raw_data):
     """
@@ -71,13 +75,14 @@ def parse_http_request(raw_data):
     except Exception:
         return None, None, None, {}
 
-def build_http_response(status, headers, body=b''):
+def build_http_response(status, headers, body=b'', show_output=True):
     """
     Build complete HTTP response message
     Args:
         status: HTTP status code
         headers: Response header dict
         body: Response body bytes
+        show_output: Whether to print response headers (default True)
     Returns:
         Complete HTTP response bytes
     """
@@ -88,12 +93,38 @@ def build_http_response(status, headers, body=b''):
         403: 'Forbidden',
         404: 'Not Found'
     }
+
+    # Add Date header (HTTP/1.1 required)
+    # Using Beijing Time (CST = China Standard Time)
+    date_str = datetime.datetime.now(BEIJING_TZ).strftime('%a, %d %b %Y %H:%M:%S CST')
+    headers['Date'] = date_str
+
+    # Add Server header
+    headers['Server'] = 'TEST Server'
+
     # Status line
-    res = f"{HTTP_VER} {status} {status_msg[status]}\r\n"
+    status_line = f"{HTTP_VER} {status} {status_msg[status]}"
+    res = f"{status_line}\r\n"
+
     # Headers
     for k, v in headers.items():
         res += f"{k}: {v}\r\n"
     res += "\r\n"
+
+    # Print response headers if requested
+    if show_output:
+        print(f"[Response Headers]", flush=True)
+        print(f" {status_line}", flush=True)
+        for k, v in headers.items():
+            print(f" {k}: {v}", flush=True)
+        body_preview = body[:100] if body else b'(empty)'
+        if isinstance(body_preview, bytes):
+            try:
+                body_preview = body_preview.decode('utf-8', errors='replace')
+            except:
+                body_preview = f'<binary data, {len(body)} bytes>'
+        print(f"[Body] {body_preview if len(body) <= 100 else f'<{len(body)} bytes>'}\n", flush=True)
+
     return res.encode('utf-8') + body
 
 def handle_client(client_sock, client_addr):
@@ -104,38 +135,59 @@ def handle_client(client_sock, client_addr):
         client_addr: Client (IP, port)
     """
     client_ip = client_addr[0]
+    client_port = client_addr[1]
     keep_alive = False
+
+    # Set socket timeout to avoid blocking forever
+    client_sock.settimeout(30)  # 30 second timeout
+
+    print(f"[Client] Connected from {client_ip}:{client_port}", flush=True)
 
     try:
         while True:
             # Receive request data
-            raw_req = client_sock.recv(BUFFER_SIZE)
+            try:
+                raw_req = client_sock.recv(BUFFER_SIZE)
+            except socket.timeout:
+                print(f"[Timeout] Client {client_ip}:{client_port} - no data for 30s", flush=True)
+                break
+            except:
+                break
             if not raw_req:
                 break
 
             # Parse request
             method, path, proto, headers = parse_http_request(raw_req)
-            access_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            access_time = datetime.datetime.now(BEIJING_TZ).strftime('%Y-%m-%d %H:%M:%S')
+
+            # Print request details
+            print(f"[Request] {method} {path} {proto} from {client_ip}:{client_port}", flush=True)
+
             # Default page
             if path == '/':
                 path = '/index.html'
             local_path = WEB_ROOT + path
 
+            print(f"[Path] Mapped to: {local_path}", flush=True)
+
             # -------------------------- Error Handling --------------------------
             # 400 Bad Request: invalid method or request
             if not method or method not in SUPPORTED_METHODS:
+                print(f"[Error] 400 Bad Request - Invalid method: {method}", flush=True)
                 resp = build_http_response(400, {'Content-Length': 0})
                 client_sock.sendall(resp)
                 write_log(client_ip, access_time, path, 400)
                 break
             # 403 Forbidden: path traversal attack
             if '..' in path:
+                print(f"[Error] 403 Forbidden - Path traversal attempt detected", flush=True)
                 resp = build_http_response(403, {'Content-Length': 0})
                 client_sock.sendall(resp)
                 write_log(client_ip, access_time, path, 403)
                 break
             # 404 Not Found: file does not exist
             if not os.path.isfile(local_path):
+                print(f"[Error] 404 Not Found - File: {local_path}", flush=True)
                 resp = build_http_response(404, {'Content-Length': 0})
                 client_sock.sendall(resp)
                 write_log(client_ip, access_time, path, 404)
@@ -144,7 +196,10 @@ def handle_client(client_sock, client_addr):
             # -------------------------- Cache Control (304) --------------------------
             file_mod_time = get_file_last_modified(local_path)
             if 'If-Modified-Since' in headers:
+                print(f"[Cache] Client has cached version (If-Modified-Since: {headers['If-Modified-Since']})", flush=True)
+                print(f"[Cache] Current file time: {file_mod_time}", flush=True)
                 if headers['If-Modified-Since'] == file_mod_time:
+                    print(f"[Cache] 304 Not Modified - Using cache", flush=True)
                     resp_headers = {'Last-Modified': file_mod_time}
                     resp = build_http_response(304, resp_headers)
                     client_sock.sendall(resp)
@@ -154,6 +209,7 @@ def handle_client(client_sock, client_addr):
             # -------------------------- Normal Response (200) --------------------------
             file_size = os.path.getsize(local_path)
             mime_type = mimetypes.guess_type(local_path)[0] or 'application/octet-stream'
+            print(f"[File] Size: {file_size} bytes, Type: {mime_type}", flush=True)
             # Connection header: keep-alive / close
             conn_type = headers.get('Connection', 'close')
             keep_alive = conn_type.lower() == 'keep-alive'
@@ -166,24 +222,29 @@ def handle_client(client_sock, client_addr):
             }
 
             # Read file content only for GET
+            # HEAD method only returns headers, no body (HTTP/1.1 specification)
             body = b''
             if method == 'GET':
                 with open(local_path, 'rb') as fp:
                     body = fp.read()
 
-            # Send response
+            # Send response (build_http_response will print headers)
             resp = build_http_response(200, resp_headers, body)
             client_sock.sendall(resp)
             write_log(client_ip, access_time, path, 200)
 
             # Close if not persistent connection
             if not keep_alive:
+                print(f"[Connection] Closing connection (Connection: {conn_type})", flush=True)
                 break
+            else:
+                print(f"[Connection] Keeping connection alive (keep-alive)", flush=True)
 
     except Exception as e:
-        print(f"[Error] Handle client {client_addr}: {str(e)}")
+        print(f"[Error] Handle client {client_addr}: {str(e)}", flush=True)
     finally:
         client_sock.close()
+        print(f"[Client] Disconnected {client_ip}:{client_port}\n", flush=True)
 
 def server():
     """Start multi-threaded web server"""
@@ -197,24 +258,46 @@ def server():
     except OSError as e:
         print(f"[Error] Failed to bind to {HOST}:{PORT}")
         print(f"[Error] {e}")
-        print(f"[Hint] Port {PORT} may already be in use. Try:")
-        print(f"       1. Close other programs using port {PORT}")
-        print(f"       2. Or change the PORT variable in the code")
+        print(f"[Hint] Port {PORT} may already be in use.")
         return
     server_sock.listen(5)
-    print(f"✅ Server running at http://{HOST}:{PORT}")
 
-    with ThreadPoolExecutor(MAX_THREADS) as executor:
-        try:
-            while True:
+    print(f"[INFO] Server runs on URL: http://{HOST}:{PORT}", flush=True)
+    print("Waiting for connections... (Press Ctrl+C to stop)\n", flush=True)
+
+    server_sock.settimeout(1)  # Set timeout for KeyboardInterrupt detection
+
+    try:
+        while True:
+            try:
                 client_sock, client_addr = server_sock.accept()
-                print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] New connection from {client_addr[0]}:{client_addr[1]}", flush=True)
-                # Submit task to thread pool
-                executor.submit(handle_client, client_sock, client_addr)
-        except KeyboardInterrupt:
-            print("\nServer stopped by user")
-        finally:
-            server_sock.close()
+                print(f"[Connection] Accepted from {client_addr[0]}:{client_addr[1]}", flush=True)
+
+                # Create daemon thread to handle client
+                # Daemon threads will be killed when main program exits
+                client_thread = threading.Thread(
+                    target=handle_client,
+                    args=(client_sock, client_addr),
+                    daemon=True,
+                    name=f"client-{client_addr[0]}:{client_addr[1]}"
+                )
+                client_thread.start()
+
+                # Optionally limit active threads
+                active_threads = threading.active_count() - 1  # Exclude main thread
+                if active_threads >= MAX_THREADS:
+                    print(f"[WARN] Thread limit reached ({active_threads} active)", flush=True)
+
+            except socket.timeout:
+                # Timeout is expected, continue loop to check for KeyboardInterrupt
+                continue
+
+    except KeyboardInterrupt:
+        print("\n[INFO] Server stopped by user.")
+    finally:
+        server_sock.close()
+        print("[INFO] Server socket closed.")
+        print("[INFO] All daemon threads will exit automatically.")
 
 if __name__ == "__main__":
     server()
