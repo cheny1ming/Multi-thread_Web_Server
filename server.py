@@ -175,6 +175,14 @@ def handle_client(client_sock, client_addr):
             print(f"[Path] Mapped to: {local_path}", flush=True)
 
             # -------------------------- Error Handling --------------------------
+            # 403 Forbidden: path traversal attack (check FIRST, before file operations)
+            if '..' in path or '\\' in path:
+                print(f"[Error] 403 Forbidden - Path traversal attempt detected", flush=True)
+                resp = build_http_response(403, {'Content-Length': 0})
+                client_sock.sendall(resp)
+                write_log(client_ip, access_time, path, 403)
+                break
+
             # 400 Bad Request: invalid method or request
             if not method or method not in SUPPORTED_METHODS:
                 print(f"[Error] 400 Bad Request - Invalid method: {method}", flush=True)
