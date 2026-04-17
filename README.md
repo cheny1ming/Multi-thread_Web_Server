@@ -53,6 +53,9 @@ You can modify these constants in `server.py`:
 
 ## Testing
 
+**Before testing:**
+Make sure that the server is running at `127.0.0.1:8080`
+
 ### Test GET/HEAD Methods
 
 **Using curl:**
